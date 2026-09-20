@@ -14,6 +14,8 @@ import {
   ZoomIn,
   ZoomOut,
   X,
+  BookOpen,
+  Trash2,
 } from 'lucide-react'
 
 const DRAWING_COLORS = [
@@ -41,6 +43,7 @@ export default function ReaderControls({
   zoomLevel = 1.0,
   isVisible = true,
   onToggleBookmark,
+  onDeleteBookmark,
   onToggleDrawMode,
   onSelectHighlightColor,
   onSetDrawTool,
@@ -57,6 +60,10 @@ export default function ReaderControls({
 }) {
   const [showBookmarksModal, setShowBookmarksModal] = useState(false)
   const [showHighlightMenu, setShowHighlightMenu] = useState(false)
+  const [activeModalTab, setActiveModalTab] = useState('chapters')
+
+  const chapters = bookmarks.filter((b) => b.type === 'chapter')
+  const userBookmarks = bookmarks.filter((b) => b.type === 'manual' || !b.type)
 
   return (
     <>
@@ -343,44 +350,157 @@ export default function ReaderControls({
         </div>
       )}
 
-      {/* 4. Bookmarks List Modal */}
+      {/* 4. Contents & Bookmarks List Modal */}
       {showBookmarksModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-none animate-in fade-in duration-150">
-          <div className="w-full max-w-sm rounded-xl bg-surface-white p-5 shadow-float border border-black/10">
+          <div className="w-full max-w-md rounded-2xl bg-surface-white p-5 sm:p-6 shadow-float border border-black/10 flex flex-col max-h-[85vh]">
+            {/* Modal Header */}
             <div className="flex items-center justify-between pb-3 border-b border-surface-subtle">
-              <h3 className="font-sans font-semibold text-sm text-text-primary">Bookmarks</h3>
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-surface-dark" />
+                <h3 className="font-sans font-semibold text-sm text-text-primary">Table of Contents & Bookmarks</h3>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowBookmarksModal(false)}
-                className="text-text-muted hover:text-text-primary"
+                className="p-1 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-subtle transition-colors"
+                title="Close"
               >
                 <X size={16} />
               </button>
             </div>
 
-            <div className="max-h-60 overflow-y-auto py-2">
-              {bookmarks.length === 0 ? (
-                <p className="py-6 text-center text-xs text-text-muted font-sans">
-                  No pages bookmarked yet. Tap the bookmark icon while reading to save pages.
-                </p>
+            {/* Segmented Tabs */}
+            <div className="mt-3 flex rounded-pill bg-surface-subtle p-1 text-xs font-sans font-medium">
+              <button
+                type="button"
+                onClick={() => setActiveModalTab('chapters')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-pill transition-all ${
+                  activeModalTab === 'chapters'
+                    ? 'bg-surface-white text-text-primary font-semibold shadow-xs'
+                    : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                <BookOpen size={13} />
+                <span>Chapters</span>
+                {chapters.length > 0 && (
+                  <span className="ml-1 rounded-full bg-black/6 px-1.5 py-0.2 font-mono text-[10px] text-text-muted">
+                    {chapters.length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveModalTab('bookmarks')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-pill transition-all ${
+                  activeModalTab === 'bookmarks'
+                    ? 'bg-surface-white text-text-primary font-semibold shadow-xs'
+                    : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                <Bookmark size={13} />
+                <span>My Bookmarks</span>
+                {userBookmarks.length > 0 && (
+                  <span className="ml-1 rounded-full bg-black/6 px-1.5 py-0.2 font-mono text-[10px] text-text-muted">
+                    {userBookmarks.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Tab Contents */}
+            <div className="mt-3 flex-1 overflow-y-auto no-scrollbar py-1">
+              {activeModalTab === 'chapters' ? (
+                <div>
+                  {chapters.length === 0 ? (
+                    <div className="py-8 text-center">
+                      <BookOpen className="mx-auto h-7 w-7 text-text-muted opacity-40 mb-2" />
+                      <p className="font-sans text-xs text-text-muted">No embedded chapters detected in this document.</p>
+                      <p className="font-sans text-[11px] text-text-subtle mt-1">You can save pages manually under "My Bookmarks".</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {chapters.map((ch, idx) => {
+                        const nextCh = chapters[idx + 1]
+                        const isCurrentChapter =
+                          currentPage >= ch.pageNumber && (!nextCh || currentPage < nextCh.pageNumber)
+
+                        return (
+                          <button
+                            key={ch.id || `${ch.pageNumber}_${idx}`}
+                            type="button"
+                            onClick={() => {
+                              onJumpToPage(ch.pageNumber)
+                              setShowBookmarksModal(false)
+                            }}
+                            className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left text-xs transition-all ${
+                              isCurrentChapter
+                                ? 'bg-surface-cream text-text-primary font-semibold border border-black/8 shadow-xs'
+                                : 'text-text-secondary hover:bg-surface-subtle/70'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                                  isCurrentChapter ? 'bg-surface-dark' : 'bg-transparent'
+                                }`}
+                              />
+                              <span className="truncate">{ch.title || `Chapter at page ${ch.pageNumber}`}</span>
+                            </div>
+                            <span className="shrink-0 font-mono text-[11px] text-text-muted bg-black/4 px-2 py-0.5 rounded-md">
+                              p. {ch.pageNumber}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               ) : (
-                <div className="space-y-1">
-                  {bookmarks.map((bm) => (
-                    <button
-                      key={bm.id}
-                      type="button"
-                      onClick={() => {
-                        onJumpToPage(bm.pageNumber)
-                        setShowBookmarksModal(false)
-                      }}
-                      className="w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs text-text-primary hover:bg-surface-cream transition-colors font-sans"
-                    >
-                      <span>Page {bm.pageNumber}</span>
-                      <span className="font-mono text-[11px] text-text-subtle">
-                        {new Date(bm.createdAt).toLocaleDateString()}
-                      </span>
-                    </button>
-                  ))}
+                <div>
+                  {userBookmarks.length === 0 ? (
+                    <div className="py-8 text-center">
+                      <Bookmark className="mx-auto h-7 w-7 text-text-muted opacity-40 mb-2" />
+                      <p className="font-sans text-xs text-text-muted">No pages bookmarked yet.</p>
+                      <p className="font-sans text-[11px] text-text-subtle mt-1">Tap the Bookmark button in the bottom dock to save pages.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {userBookmarks.map((bm) => (
+                        <div
+                          key={bm.id}
+                          className="flex items-center justify-between rounded-xl px-3.5 py-2 text-xs text-text-primary hover:bg-surface-cream transition-colors group"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onJumpToPage(bm.pageNumber)
+                              setShowBookmarksModal(false)
+                            }}
+                            className="flex-1 flex items-center justify-between text-left mr-2"
+                          >
+                            <span className="font-medium font-sans">Page {bm.pageNumber}</span>
+                            <span className="font-mono text-[11px] text-text-subtle">
+                              {new Date(bm.createdAt).toLocaleDateString()}
+                            </span>
+                          </button>
+                          {onDeleteBookmark && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                onDeleteBookmark(bm.id)
+                              }}
+                              className="p-1 rounded-md text-text-subtle hover:text-red-600 hover:bg-red-50 transition-colors opacity-70 group-hover:opacity-100"
+                              title="Delete bookmark"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   getBook,
+  saveBook,
   updateReadingProgress,
   getHighlightsForPage,
   saveHighlight,
@@ -11,9 +12,17 @@ import {
   isPageBookmarked,
   toggleBookmark,
   getBookmarksForBook,
+  syncAutoChapters,
+  deleteBookmark,
 } from '../services/db'
 import { getBookDownloadUrl } from '../services/storage'
-import { loadPdfDocument, renderPageToCanvas, renderPageToCache, getPageTextContent } from '../services/pdf'
+import {
+  loadPdfDocument,
+  renderPageToCanvas,
+  renderPageToCache,
+  getPageTextContent,
+  extractPdfChapters,
+} from '../services/pdf'
 import PageTurnContainer from '../components/reader/PageTurnContainer'
 import DrawingCanvas from '../components/reader/DrawingCanvas'
 import HighlightLayer from '../components/reader/HighlightLayer'
@@ -93,6 +102,23 @@ export default function ReaderPage() {
         if (!isMounted) return
         setPdfDoc(loadedDoc)
         setTotalPages(loadedDoc.numPages)
+
+        // Asynchronously auto-detect and sync chapters in background
+        if (!bookRecord.chaptersIndexed) {
+          extractPdfChapters(loadedDoc)
+            .then(async (chapters) => {
+              if (chapters && chapters.length > 0) {
+                const updatedBookmarks = await syncAutoChapters(bookId, chapters)
+                if (isMounted) {
+                  setBookmarks(updatedBookmarks)
+                }
+              }
+              await saveBook({ ...bookRecord, chaptersIndexed: true })
+            })
+            .catch((err) => {
+              console.warn('Background chapter auto-detection error:', err)
+            })
+        }
       } catch (err) {
         if (!isMounted) return
         console.error('Reader initialization error:', err)
@@ -116,9 +142,12 @@ export default function ReaderPage() {
     if (!pdfDoc || !canvasRef.current || !containerRef.current) return
 
     try {
-      const containerWidth = containerRef.current.clientWidth
+      const containerWidth = containerRef.current.clientWidth || window.innerWidth
+      const containerHeight = containerRef.current.clientHeight || window.innerHeight
       // Allocate width: leaving clear room for outside buttons on desktop, or full comfortable width on phone
       const targetWidth = Math.min(containerWidth < 640 ? containerWidth - 16 : containerWidth - 96, 760)
+      // Allocate height: clear space for top header (55px) + bottom capsule dock (75px) + breathing margin = 150px
+      const targetHeight = Math.max(300, (window.innerHeight || containerHeight || 800) - 150)
       const zoomToUse = typeof customZoom === 'number' ? customZoom : zoomLevelRef.current
 
       // Pass zoomToUse to renderPageToCanvas so high-DPI backing store renders crisp vector graphics without blur
@@ -127,7 +156,8 @@ export default function ReaderPage() {
         currentPage,
         canvasRef.current,
         targetWidth,
-        zoomToUse
+        zoomToUse,
+        targetHeight
       )
 
       if (!renderResult) return
@@ -156,14 +186,14 @@ export default function ReaderPage() {
 
       // Pre-render Next Page (N + 1) in background
       if (currentPage < totalPages && !pageCache[currentPage + 1]) {
-        renderPageToCache(pdfDoc, currentPage + 1, targetWidth).then((nextData) => {
+        renderPageToCache(pdfDoc, currentPage + 1, targetWidth, targetHeight).then((nextData) => {
           setPageCache((prev) => ({ ...prev, [currentPage + 1]: nextData }))
         }).catch((e) => console.warn('Pre-render next page error:', e))
       }
 
       // Pre-render Previous Page (N - 1) in background
       if (currentPage > 1 && !pageCache[currentPage - 1]) {
-        renderPageToCache(pdfDoc, currentPage - 1, targetWidth).then((prevData) => {
+        renderPageToCache(pdfDoc, currentPage - 1, targetWidth, targetHeight).then((prevData) => {
           setPageCache((prev) => ({ ...prev, [currentPage - 1]: prevData }))
         }).catch((e) => console.warn('Pre-render prev page error:', e))
       }
@@ -235,7 +265,7 @@ export default function ReaderPage() {
   // Panning is ONLY permitted when zoomed in AND the page is trespassing the viewport
   const vWidth = viewportSize.width || (typeof window !== 'undefined' ? window.innerWidth : 390)
   const vHeight = viewportSize.height || (typeof window !== 'undefined' ? window.innerHeight : 800)
-  const visibleReadingHeight = vHeight - 110 // Reserved space for top bar and floating capsule dock
+  const visibleReadingHeight = Math.max(300, vHeight - 140) // Reserved space for top bar and floating capsule dock
 
   const scaledWidth = pageSize.width * zoomLevel
   const scaledHeight = pageSize.height * zoomLevel
@@ -540,7 +570,7 @@ export default function ReaderPage() {
     })
   }
 
-  // 7. Bookmark Toggle Handler
+  // 7. Bookmark Toggle & Delete Handlers
   const handleToggleBookmark = async () => {
     try {
       const isNowBookmarked = await toggleBookmark(bookId, currentPage)
@@ -549,6 +579,18 @@ export default function ReaderPage() {
       setBookmarks(updatedBookmarks)
     } catch (err) {
       console.warn('Failed to toggle bookmark:', err)
+    }
+  }
+
+  const handleDeleteBookmark = async (bookmarkId) => {
+    try {
+      await deleteBookmark(bookmarkId)
+      const updatedBookmarks = await getBookmarksForBook(bookId)
+      setBookmarks(updatedBookmarks)
+      const bookmarked = await isPageBookmarked(bookId, currentPage)
+      setIsBookmarked(bookmarked)
+    } catch (err) {
+      console.warn('Failed to delete bookmark:', err)
     }
   }
 
@@ -592,7 +634,7 @@ export default function ReaderPage() {
   return (
     <div
       ref={containerRef}
-      className="relative flex min-h-screen flex-col items-center justify-center bg-canvas overflow-hidden py-12 px-2 sm:px-6 select-none no-scrollbar"
+      className="relative flex h-screen w-full flex-col items-center justify-center bg-canvas overflow-hidden py-2 px-2 sm:px-6 select-none no-scrollbar"
     >
       {/* Reader Navigation & Context Controls */}
       <ReaderControls
@@ -612,6 +654,7 @@ export default function ReaderPage() {
         zoomLevel={zoomLevel}
         isVisible={controlsVisible}
         onToggleBookmark={handleToggleBookmark}
+        onDeleteBookmark={handleDeleteBookmark}
         onToggleDrawMode={() => setIsDrawMode((prev) => !prev)}
         onSelectHighlightColor={setActiveHighlightColor}
         onSetDrawTool={setDrawTool}

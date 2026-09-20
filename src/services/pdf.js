@@ -47,7 +47,7 @@ export async function generateCoverThumbnail(pdfDoc, width = 360) {
  * Renders a specific page onto an HTML5 canvas element with high-DPI supersampling.
  * Guarantees razor-sharp vector clarity when zoomed up to 300%.
  */
-export async function renderPageToCanvas(pdfDoc, pageNumber, canvas, containerWidth, zoom = 1.0) {
+export async function renderPageToCanvas(pdfDoc, pageNumber, canvas, containerWidth, zoom = 1.0, containerHeight = null) {
   if (!pdfDoc || !canvas) return null
 
   // Cancel any ongoing render task on this canvas before starting a new one
@@ -68,7 +68,9 @@ export async function renderPageToCanvas(pdfDoc, pageNumber, canvas, containerWi
   const effectiveZoom = Math.max(1.0, Math.min(zoom || 1.0, 3.0))
 
   const unscaledViewport = page.getViewport({ scale: 1.0 })
-  const baseScale = containerWidth / unscaledViewport.width
+  const scaleX = containerWidth / unscaledViewport.width
+  const scaleY = containerHeight ? containerHeight / unscaledViewport.height : scaleX
+  const baseScale = Math.min(scaleX, scaleY)
   const displayViewport = page.getViewport({ scale: baseScale })
 
   // Max dimension safeguard to respect mobile GPU memory limits
@@ -119,12 +121,14 @@ export async function renderPageToCanvas(pdfDoc, pageNumber, canvas, containerWi
  * Pre-renders a specific page to an off-screen cache with high-DPI supersampling.
  * Used for zero-delay instant flipping of adjacent pages (N-1 and N+1).
  */
-export async function renderPageToCache(pdfDoc, pageNumber, containerWidth) {
+export async function renderPageToCache(pdfDoc, pageNumber, containerWidth, containerHeight = null) {
   const page = await pdfDoc.getPage(pageNumber)
   const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 2.5)
 
   const unscaledViewport = page.getViewport({ scale: 1.0 })
-  const baseScale = containerWidth / unscaledViewport.width
+  const scaleX = containerWidth / unscaledViewport.width
+  const scaleY = containerHeight ? containerHeight / unscaledViewport.height : scaleX
+  const baseScale = Math.min(scaleX, scaleY)
   const displayViewport = page.getViewport({ scale: baseScale })
   const renderViewport = page.getViewport({ scale: baseScale * dpr })
 
@@ -164,3 +168,123 @@ export async function getPageTextContent(pdfDoc, pageNumber, viewport = null) {
     viewport: pageViewport,
   }
 }
+
+/**
+ * Recursively extracts chapters from PDF outline or falls back to heuristic text parsing.
+ * Returns an array of: { title: string, pageNumber: number, type: 'chapter', isAuto: true }
+ */
+export async function extractPdfChapters(pdfDoc) {
+  if (!pdfDoc) return []
+
+  try {
+    const outline = await pdfDoc.getOutline()
+
+    if (outline && outline.length > 0) {
+      const chapters = []
+
+      // Helper to resolve PDF destination to 1-based page number
+      async function resolveDestination(dest) {
+        if (!dest) return null
+        let explicitDest = dest
+        if (typeof dest === 'string') {
+          explicitDest = await pdfDoc.getDestination(dest)
+        }
+        if (Array.isArray(explicitDest) && explicitDest.length > 0) {
+          const pageRef = explicitDest[0]
+          if (typeof pageRef === 'number') {
+            return pageRef + 1
+          }
+          if (pageRef && typeof pageRef === 'object') {
+            const pageIndex = await pdfDoc.getPageIndex(pageRef)
+            return pageIndex !== null && pageIndex !== undefined ? pageIndex + 1 : null
+          }
+        }
+        return null
+      }
+
+      async function traverseItems(items) {
+        for (const item of items) {
+          try {
+            const pageNum = await resolveDestination(item.dest)
+            if (pageNum && item.title) {
+              chapters.push({
+                title: item.title.trim().replace(/[\r\n]+/g, ' '),
+                pageNumber: pageNum,
+                type: 'chapter',
+                isAuto: true,
+              })
+            }
+          } catch (itemErr) {
+            console.warn('Could not resolve destination for outline item:', item?.title, itemErr)
+          }
+
+          if (item.items && Array.isArray(item.items) && item.items.length > 0) {
+            await traverseItems(item.items)
+          }
+        }
+      }
+
+      await traverseItems(outline)
+
+      if (chapters.length > 0) {
+        // Sort sequentially by page number and deduplicate by pageNumber + title
+        const seen = new Set()
+        const unique = []
+        for (const ch of chapters.sort((a, b) => a.pageNumber - b.pageNumber)) {
+          const key = `${ch.pageNumber}_${ch.title}`
+          if (!seen.has(key)) {
+            seen.add(key)
+            unique.push(ch)
+          }
+        }
+        return unique
+      }
+    }
+
+    // Tier 2 Fallback: Heuristic scan on text content
+    return await scanPagesForChapters(pdfDoc, Math.min(pdfDoc.numPages || 1, 60))
+  } catch (err) {
+    console.warn('Could not auto-extract PDF chapters:', err)
+    return []
+  }
+}
+
+/**
+ * Fallback scanner inspecting text items on pages for chapter headings.
+ */
+async function scanPagesForChapters(pdfDoc, maxPages) {
+  const chapterRegex = /^(?:chapter|part|section|book|act|scene)\s+([0-9ivxlcdm]+|[a-z]+)[\s:.-]*(.*)$/i
+  const detected = []
+  const seenPages = new Set()
+
+  for (let i = 1; i <= maxPages; i++) {
+    try {
+      const page = await pdfDoc.getPage(i)
+      const textContent = await page.getTextContent()
+      if (!textContent || !textContent.items || textContent.items.length === 0) continue
+
+      // Inspect first 15 text items on the page
+      const sampleItems = textContent.items.slice(0, 15)
+      for (const item of sampleItems) {
+        const line = item.str ? item.str.trim() : ''
+        if (line.length >= 4 && line.length <= 80 && chapterRegex.test(line)) {
+          if (!seenPages.has(i)) {
+            seenPages.add(i)
+            detected.push({
+              title: line,
+              pageNumber: i,
+              type: 'chapter',
+              isAuto: true,
+            })
+            break
+          }
+        }
+      }
+    } catch {
+      // Continue next page if one fails
+    }
+  }
+
+  return detected
+}
+

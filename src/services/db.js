@@ -154,29 +154,67 @@ export async function deleteDrawing(id) {
 
 export async function getBookmarksForBook(bookId) {
   const db = await getDB()
-  return db.getAllFromIndex('bookmarks', 'by-book', bookId)
+  const items = await db.getAllFromIndex('bookmarks', 'by-book', bookId)
+  return items.sort((a, b) => a.pageNumber - b.pageNumber)
 }
 
 export async function isPageBookmarked(bookId, pageNumber) {
   const db = await getDB()
   const marks = await db.getAllFromIndex('bookmarks', 'by-book-page', [bookId, pageNumber])
-  return marks.length > 0
+  return marks.some((m) => m.type === 'manual' || !m.type)
 }
 
 export async function toggleBookmark(bookId, pageNumber) {
   const db = await getDB()
   const marks = await db.getAllFromIndex('bookmarks', 'by-book-page', [bookId, pageNumber])
-  if (marks.length > 0) {
-    await db.delete('bookmarks', marks[0].id)
+  const manualMark = marks.find((m) => m.type === 'manual' || !m.type)
+
+  if (manualMark) {
+    await db.delete('bookmarks', manualMark.id)
     return false
   } else {
     const newMark = {
-      id: `bm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: `bm_user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       bookId,
       pageNumber,
+      type: 'manual',
+      isAuto: false,
       createdAt: new Date().toISOString(),
     }
     await db.put('bookmarks', newMark)
     return true
   }
 }
+
+export async function syncAutoChapters(bookId, chapters) {
+  if (!bookId || !Array.isArray(chapters) || chapters.length === 0) return []
+  const db = await getDB()
+  const existing = await db.getAllFromIndex('bookmarks', 'by-book', bookId)
+  const existingChapterPages = new Set(
+    existing.filter((b) => b.type === 'chapter').map((b) => `${b.pageNumber}_${b.title}`)
+  )
+
+  const tx = db.transaction('bookmarks', 'readwrite')
+  for (const ch of chapters) {
+    const key = `${ch.pageNumber}_${ch.title}`
+    if (!existingChapterPages.has(key)) {
+      await tx.objectStore('bookmarks').put({
+        id: `bm_ch_${bookId}_p${ch.pageNumber}_${Math.random().toString(36).substring(2, 6)}`,
+        bookId,
+        pageNumber: ch.pageNumber,
+        title: ch.title,
+        type: 'chapter',
+        isAuto: true,
+        createdAt: new Date().toISOString(),
+      })
+    }
+  }
+  await tx.done
+  return getBookmarksForBook(bookId)
+}
+
+export async function deleteBookmark(id) {
+  const db = await getDB()
+  await db.delete('bookmarks', id)
+}
+
