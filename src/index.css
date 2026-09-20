@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-mono: 'JetBrains Mono', Consolas, monospace;
+
+  --color-canvas: #F8F7F4;
+  --color-surface-white: #FFFFFF;
+  --color-surface-cream: #F5F3EC;
+  --color-surface-subtle: #EFECE5;
+  --color-surface-dark: #121214;
+
+  --color-text-primary: #111113;
+  --color-text-secondary: #3F3F46;
+  --color-text-muted: #71717A;
+  --color-text-subtle: #A1A1AA;
+  --color-text-inverse: #FFFFFF;
+
+  --color-lavender-surface: #EDE9FE;
+  --color-lavender-border: #DDD6FE;
+  --color-lavender-text: #6D28D9;
+
+  --color-honey-surface: #FEF9C3;
+  --color-honey-border: #FDE047;
+  --color-honey-text: #854D0E;
+
+  --color-mint-surface: #DCFCE7;
+  --color-mint-border: #BBF7D0;
+  --color-mint-text: #15803D;
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-pill: 9999px;
+
+  --shadow-soft: 0 12px 32px -4px rgba(0, 0, 0, 0.06), 0 4px 12px -2px rgba(0, 0, 0, 0.03);
+  --shadow-float: 0 20px 48px -8px rgba(0, 0, 0, 0.14);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  line-height: 1.5;
+  font-family: var(--font-sans);
+  color: var(--color-text-primary);
+  background-color: var(--color-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* Hide scrollbars cleanly */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Custom 3D Book Page Styling */
+.book-perspective {
+  perspective: 1600px;
+  perspective-origin: center center;
+}
+
+.book-page-turning {
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  will-change: transform;
+}
+
+/* PDF Text Layer Selection Overlay */
+.pdf-text-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  opacity: 1;
+  line-height: 1;
+  user-select: text;
+  pointer-events: auto;
+}
+
+.pdf-text-layer span {
+  color: transparent !important;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.pdf-text-layer ::selection {
+  background: rgba(250, 204, 21, 0.25);
+  color: transparent !important;
+}
